@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "auto_modem_admin"
+name = "automodemadmin"
 version = "0.1.0"
 description = ""
 authors = ["Matthew Boyle <MatthewABoyle@gmail.com>"]
