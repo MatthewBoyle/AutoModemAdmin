@@ -1,15 +1,20 @@
 [tool.poetry]
 name = "automodemadmin"
 version = "0.1.0"
-description = ""
+description = "Simple script to add automated reboot to home modem."
 authors = ["Matthew Boyle <MatthewABoyle@gmail.com>"]
+repository = "https://github.com/MatthewBoyle/AutoModemAdmin.git"
 
 [tool.poetry.dependencies]
 python = "^3.8"
 click = "^7.1.2"
+requests = "^2.25.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
+
+[tool.poetry.scripts]
+automodemadmin = 'automodemadmin.main:run'
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
