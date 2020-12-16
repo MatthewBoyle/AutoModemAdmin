@@ -3,18 +3,21 @@
 This module contains all the various Modem implementations, as well as a factory function capable of
 retrieving the correct class via model name."""
 import requests
-from nononesdefaultdict import NoNonesDefaultDict
-from abc import ABCMeta, abstractmethod
 import functools
 import datetime
+from abc import ABCMeta, abstractmethod
+from nononesdefaultdict import NoNonesDefaultDict
+
 
 def get(model, configurations):
-    if model == "TG1682G":
+    if model.upper() == "TG1682G":
         return ModemTG1682G(configurations)
-    raise UnknownModemModelError
+    raise UnknownModemModelError(f"No known implementation for modems of model type {model}!")
+
 
 class ModemMeta(ABCMeta):
     pass
+
 
 class Modem(metaclass=ModemMeta):
     """Abstract base class for modems.
@@ -29,7 +32,7 @@ class Modem(metaclass=ModemMeta):
     :class-properties
         TIMEOUT_LIMIT: time limit (in seconds) to wait for a response from the server
     """
-    TIMEOUT_LIMIT = 10.0
+    TIMEOUT_LIMIT = 60.0
 
     def __init__(self, configurations={}):
         self.ip_address = configurations.get('ip_address')
@@ -61,6 +64,7 @@ class AuthModem(Modem, metaclass=ModemMeta):
         session
         credentials
     """
+
     def __init__(self, configurations={}):
         super().__init__(configurations)
         self.ignore_cert = configurations.get('ignore_cert') or False
@@ -129,18 +133,19 @@ class AuthModem(Modem, metaclass=ModemMeta):
         :parameter cookiename: string name of the cookie to update.
         :parameter expires_in_x: the number of seconds that this cookie lasts for
         """
+
         # Actually, since this decorator takes a parameter, it is a factory function that returns a decorator,
         # which in turn returns the wrapped function that handles expiration update
-        def refresh_decorator(method):
+        def refresher_decorator(method):
             @functools.wraps(method)
-            def refreshing_method(self, *args, **kwargs):
+            def refresher_method(self, *args, **kwargs):
                 result = method(self, *args, **kwargs)
                 for c in self.session.cookies:
                     if c.name == cookiename:
                         c.expires = (datetime.datetime.now() + datetime.timedelta(seconds=expires_in_x)).isoformat()
                 return result
-            return refreshing_method
-        return refresh_decorator
+            return refresher_method
+        return refresher_decorator
 
 
 # Bind names locally for convenience
@@ -152,58 +157,60 @@ class ModemTG1682G(AuthModem):
     """An class representation of the TG1682 Modem, intended to pass commands on to the real thing."""
 
     # The amount of time (in seconds) that the server will keep the authentication cookie alive for.
-    # No, it doesn't just set a cookie-expiry response to the browser, that would be trivial to mess with.
-    INTERNAL_COOKIE_EXPIRY = 10 * 60
-    AUTHCOOKIE_NAME = 'PHPSESSID'
+    # No, it doesn't just set a cookie-expiry response to the browser, that would be too easy
+    COOKIE_EXPIRY = 10 * 60  # 10 minutes
+    AUTHCOOKIE = 'PHPSESSID' # Name of the cookie that this modem uses for authentication
 
     def authenticate(self):
         """Authenticate to modem using prior username and password"""
         # Construct an HTTPS POST request to the login page of the modem with session credentials
-        url = 'https://'.join(self.ip_address).join("/check.php")
-        response = self.session.post(url, data=self.credentials, timeout=ModemTG1682G.TIMEOUT_LIMIT,
+        url = ''.join(['https://', self.ip_address, "/check.php"])
+        response = self.session.post(url, data=self.credentials, timeout=self.TIMEOUT_LIMIT,
                                      verify=not self.ignore_cert)
         if response.ok and not self.is_authenticated():
-            raise InvalidCredentialsError()
+            raise InvalidCredentialsError(response=response)
 
     def is_authenticated(self):
         """Determine whether user is authenticated to modem by looking for valid PHPSESSID cookie."""
         for c in self.session.cookies:
-            if c.name == self.AUTHCOOKIE_NAME and not c.is_expired():
+            if c.name == self.AUTHCOOKIE and not c.is_expired():
                 return True
         return False
 
-    @refresh_cookie(AUTHCOOKIE_NAME, INTERNAL_COOKIE_EXPIRY)
+    @refresh_cookie(AUTHCOOKIE, COOKIE_EXPIRY)
     @requires_authentication
     def reboot(self):
-        url = 'https://'.join(self.ip_address).join('/actionHandler/ajaxSet_mta_Line_Diagnostics.php')
+        url = ''.join(['https://', self.ip_address, '/actionHandler/ajaxSet_mta_Line_Diagnostics.php'])
         data = {'get_statusx': 'false', 'restore_reboot': 'true'}
-        header = {'Referer': 'https://'.join(self.ip_address).join('/restore_reboot.php')}
-        response = self.session.post(url, data, header=header, verify=not self.ignore_cert)
+        header = {'Referer': ''.join(['https://', self.ip_address, '/restore_reboot.php'])}
+        self.session.post(url, data, header=header, timeout=self.TIMEOUT_LIMIT, verify=not self.ignore_cert)
 
-    @refresh_cookie(AUTHCOOKIE_NAME, INTERNAL_COOKIE_EXPIRY)
+    @refresh_cookie(AUTHCOOKIE, COOKIE_EXPIRY)
     @requires_authentication
     def reset_wifi(self):
         """TODO: Reset just the wifi module, not the whole modem."""
         pass
 
-    @refresh_cookie(AUTHCOOKIE_NAME, INTERNAL_COOKIE_EXPIRY)
+    @refresh_cookie(AUTHCOOKIE, COOKIE_EXPIRY)
     @requires_authentication
     def get_page(self, page):
-        url = "https://".join(self.ip_address).join("/").join(page)
-        response = self.session.get(url, verify=not self.ignore_cert)
+        url = "".join(["https://", self.ip_address, '/', page])
+        response = self.session.get(url, timeout=self.TIMEOUT_LIMIT, verify=not self.ignore_cert)
         return response
 
-    @refresh_cookie(AUTHCOOKIE_NAME, INTERNAL_COOKIE_EXPIRY)
+    @refresh_cookie(AUTHCOOKIE, COOKIE_EXPIRY)
     @requires_authentication
     def migrate_channel(self):
         """TODO: Scan for less congested bands and set modem wifi to use those."""
         pass
 
+
 # Helper error classes
 class UnknownModemModelError(Exception):
     """Raised when attempting to find a modem that there is no known implementation for."""
+    pass
 
-class InvalidCredentialsError(Exception):
+
+class InvalidCredentialsError(requests.RequestException):
     """Raised when authentication failed with provided credentials. Bad username/password."""
-    # TODO: Include the response object in the exception, so any logging services can include the full response data
     pass
